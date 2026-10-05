@@ -12,7 +12,7 @@
 
 class SparkWiFiManager {
 public:
-    SparkWiFiManager() : server(80), dnsServer(), isApMode(true), isConnected(false) {}
+    SparkWiFiManager() : server(80), dnsServer(), isApMode(false), isConnected(false) {}
 
     typedef void (*StatusCallback)(const String& status, const String& details);
     typedef void (*QrCallback)(const String& qrPayload, const String& title, const String& instructions, const String& subText);
@@ -20,33 +20,17 @@ public:
     void begin(StatusCallback onStatus = nullptr, QrCallback onQr = nullptr) {
         statusCb = onStatus;
         qrCb = onQr;
-
-        // Dual AP + STA mode: AP is always ready on 192.168.4.1 as direct hub!
-        WiFi.mode(WIFI_AP_STA);
-        esp_wifi_set_ps(WIFI_PS_NONE);
-        WiFi.setSleep(false);
-        WiFi.setAutoReconnect(true);
-
-        IPAddress apIP(192, 168, 4, 1);
-        WiFi.softAPConfig(apIP, apIP, IPAddress(255, 255, 255, 0));
-        WiFi.softAP("SparkAI-Setup");
-
-        dnsServer.setErrorReplyCode(DNSReplyCode::NoError);
-        dnsServer.start(53, "*", apIP);
-        setupWebServerRoutes();
-        server.begin();
-
         WiFi.onEvent([](WiFiEvent_t event, WiFiEventInfo_t info) {
             if (event == ARDUINO_EVENT_WIFI_STA_DISCONNECTED) {
                 Serial.printf("[WiFi Event] Disconnected, reason: %d\n", info.wifi_sta_disconnected.reason);
             } else if (event == ARDUINO_EVENT_WIFI_STA_CONNECTED) {
-                Serial.println("[WiFi Event] Associated with AP!");
+                Serial.printf("[WiFi Event] Associated with AP! Channel: %d\n", WiFi.channel());
             } else if (event == ARDUINO_EVENT_WIFI_STA_GOT_IP) {
                 Serial.printf("[WiFi Event] Got IP: %s\n", IPAddress(info.got_ip.ip_info.ip.addr).toString().c_str());
             }
         });
-
         prefs.begin("spark_wifi", false);
+
         storedSsid = prefs.getString("ssid", "");
         storedPass = prefs.getString("pass", "");
         prefs.end();
@@ -54,37 +38,30 @@ public:
         Serial.printf("[WiFi] Stored SSID: '%s'\n", storedSsid.c_str());
 
         if (storedSsid.length() > 0) {
-            connectToSavedWifi();
+            bool ok = connectToSavedWifi();
+            if (!ok) {
+                Serial.println("[WiFi] Connection to saved network failed. Starting setup AP...");
+                startCaptivePortal();
+            }
         } else {
-            notifyStatus("Wi-Fi Setup Mode", "Join: SparkAI-Setup");
-            notifyQr("WIFI:S:SparkAI-Setup;;", "[ WI-FI SETUP ]", "1. Join 'SparkAI-Setup'\n2. Open 192.168.4.1", "SparkAI-Setup");
+            Serial.println("[WiFi] No saved credentials. Starting setup AP...");
+            startCaptivePortal();
         }
     }
 
     void handle() {
-        dnsServer.processNextRequest();
-        server.handleClient();
-
-        if (storedSsid.length() > 0 && WiFi.status() != WL_CONNECTED) {
-            static uint32_t lastRetry = 0;
-            if (millis() - lastRetry > 8000) {
-                lastRetry = millis();
-                Serial.printf("[WiFi] Background reconnect to '%s'...\n", storedSsid.c_str());
-                WiFi.begin(storedSsid.c_str(), storedPass.c_str());
-            }
+        if (isApMode) {
+            dnsServer.processNextRequest();
+            server.handleClient();
         }
     }
 
     bool isWifiConnected() const {
-        return (WiFi.status() == WL_CONNECTED);
+        return isConnected;
     }
 
     String getLocalIp() const {
-        if (WiFi.status() == WL_CONNECTED) {
-            String ip = WiFi.localIP().toString();
-            if (ip != "0.0.0.0" && ip.length() > 0) return ip;
-        }
-        return "192.168.4.1";
+        return isConnected ? WiFi.localIP().toString() : (isApMode ? WiFi.softAPIP().toString() : "0.0.0.0");
     }
 
     String getSsid() const {
@@ -98,27 +75,37 @@ public:
         prefs.end();
         storedSsid = "";
         storedPass = "";
-        WiFi.disconnect();
-        notifyStatus("Wi-Fi Setup Mode", "Join: SparkAI-Setup");
-        notifyQr("WIFI:S:SparkAI-Setup;;", "[ WI-FI SETUP ]", "1. Join 'SparkAI-Setup'\n2. Open 192.168.4.1", "SparkAI-Setup");
+        WiFi.disconnect(true, true);
+        startCaptivePortal();
     }
 
     bool connectToSavedWifi() {
+        isApMode = false;
+        WiFi.disconnect(true, true);
+        delay(200);
+        WiFi.mode(WIFI_STA);
+        delay(100);
+        WiFi.setSleep(false);
+        WiFi.setAutoReconnect(true);
+        WiFi.setTxPower(WIFI_POWER_11dBm);
+
         Serial.printf("[WiFi] Connecting to '%s'...\n", storedSsid.c_str());
         notifyStatus("Connecting Wi-Fi", storedSsid);
 
         WiFi.begin(storedSsid.c_str(), storedPass.c_str());
 
         uint32_t startAttempt = millis();
-        int lastSec = -1;
-        while (WiFi.status() != WL_CONNECTED && (millis() - startAttempt) < 15000) {
-            int elapsed = (millis() - startAttempt) / 1000;
-            if (elapsed != lastSec) {
-                lastSec = elapsed;
-                notifyStatus("Connecting Wi-Fi", storedSsid + " (" + String(elapsed) + "s)");
+        int attempts = 0;
+        // Allow up to 25 seconds for Spectrum DHCP / WPA3 band-steering negotiation
+        while (WiFi.status() != WL_CONNECTED && (millis() - startAttempt) < 25000) {
+            delay(250);
+            attempts++;
+            if (attempts % 4 == 0) {
+                int secElapsed = (millis() - startAttempt) / 1000;
+                String dots = "";
+                for (int d = 0; d < (attempts / 4) % 4; d++) dots += ".";
+                notifyStatus("Connecting Wi-Fi", storedSsid + " (" + String(secElapsed) + "s)" + dots);
             }
-            delay(100);
-            yield();
             lv_timer_handler();
         }
 
@@ -131,10 +118,30 @@ public:
             notifyStatus("Wi-Fi Connected!", "IP: " + ipStr);
             return true;
         } else {
-            Serial.printf("[WiFi] Timeout connecting to '%s'. AP Hub active at 192.168.4.1\n", storedSsid.c_str());
-            notifyStatus("Wi-Fi: Retrying", "Direct Hub: 192.168.4.1");
+            Serial.printf("[WiFi] Connection failed (status code: %d)\n", WiFi.status());
+            notifyStatus("Wi-Fi Failed", "Starting AP...");
             return false;
         }
+    }
+    void startCaptivePortal() {
+        isApMode = true;
+        isConnected = false;
+        WiFi.disconnect(true, true);
+        delay(100);
+        WiFi.mode(WIFI_AP);
+        WiFi.softAP("SparkAI-Setup");
+
+        IPAddress apIP(192, 168, 4, 1);
+        WiFi.softAPConfig(apIP, apIP, IPAddress(255, 255, 255, 0));
+
+        dnsServer.setErrorReplyCode(DNSReplyCode::NoError);
+        dnsServer.start(53, "*", apIP);
+
+        setupWebServerRoutes();
+        server.begin();
+
+        notifyStatus("Wi-Fi Setup Mode", "Join: SparkAI-Setup");
+        notifyQr("WIFI:S:SparkAI-Setup;;", "[ WI-FI SETUP ]", "1. Join 'SparkAI-Setup'\n2. Open 192.168.4.1", "SparkAI-Setup");
     }
 
 private:
@@ -161,43 +168,6 @@ private:
             server.send(200, "text/html", renderPortalHtml());
         });
 
-        // Live connection test API for the captive portal: phone never drops connection!
-        server.on("/api/connect_test", HTTP_POST, [this]() {
-            String ssid = server.arg("ssid");
-            String pass = server.arg("pass");
-            ssid.trim();
-            pass.trim();
-
-            if (ssid.length() == 0) {
-                server.send(400, "application/json", "{\"success\":false,\"error\":\"SSID is required\"}");
-                return;
-            }
-
-            Serial.printf("[Portal] Testing connection to '%s'...\n", ssid.c_str());
-            WiFi.begin(ssid.c_str(), pass.c_str());
-
-            uint32_t t0 = millis();
-            while (WiFi.status() != WL_CONNECTED && (millis() - t0) < 10000) {
-                delay(200);
-                yield();
-            }
-
-            if (WiFi.status() == WL_CONNECTED) {
-                String ip = WiFi.localIP().toString();
-                prefs.begin("spark_wifi", false);
-                prefs.putString("ssid", ssid);
-                prefs.putString("pass", pass);
-                prefs.end();
-                storedSsid = ssid;
-                storedPass = pass;
-                isConnected = true;
-                notifyStatus("Wi-Fi Connected!", "IP: " + ip);
-                server.send(200, "application/json", "{\"success\":true,\"ip\":\"" + ip + "\"}");
-            } else {
-                server.send(200, "application/json", "{\"success\":false,\"error\":\"Could not connect (Reason " + String(WiFi.status()) + "). Check password or select another network.\"}");
-            }
-        });
-
         server.on("/connect", HTTP_POST, [this]() {
             String ssid = server.arg("ssid");
             String pass = server.arg("pass");
@@ -222,11 +192,11 @@ private:
             String successPage = "<!DOCTYPE html><html><head><meta name='viewport' content='width=device-width, initial-scale=1'><style>"
                                 "body{background:#0F172A;color:#E2E8F0;font-family:sans-serif;text-align:center;padding:40px;}"
                                 "h2{color:#38BDF8;}.box{background:#1E293B;padding:24px;border-radius:12px;margin:20px auto;max-width:340px;border:1px solid #334155;}"
-                                "</style></head><body><div class='box'><h2>Credentials Saved!</h2><p>Connecting to <b>" + ssid + "</b>...</p><p>Check the screen for IP address!</p></div></body></html>";
+                                "</style></head><body><div class='box'><h2>Credentials Saved!</h2><p>SparkAI is connecting to <b>" + ssid + "</b>...</p><p>Check the screen for IP address!</p></div></body></html>";
 
             server.send(200, "text/html", successPage);
-            delay(1500);
-            connectToSavedWifi();
+            delay(1000);
+            ESP.restart();
         });
 
         // Captive portal detection redirects
@@ -258,37 +228,25 @@ private:
                       "select:focus,input:focus{border-color:#38BDF8;}"
                       "button{width:100%;padding:14px;background:#0284C7;background:linear-gradient(135deg,#0284C7,#0369A1);color:#FFFFFF;border:none;border-radius:8px;font-size:16px;font-weight:700;cursor:pointer;margin-top:16px;}"
                       "button:hover{background:#0369A1;}"
-                      "#statusBox{display:none;padding:12px;border-radius:8px;margin-top:16px;font-size:14px;text-align:center;}"
                       ".badge{display:inline-block;background:#1E293B;color:#38BDF8;padding:4px 10px;border-radius:20px;font-size:12px;margin-bottom:14px;font-weight:600;}"
                       "</style></head><body>"
                       "<div class='card'>"
                       "<div style='text-align:center'><span class='badge'>SPARKAI HARDWARE COMPANION</span></div>"
                       "<h2>Connect to Wi-Fi</h2>"
-                      "<p>Select your 2.4GHz Wi-Fi network (or mobile hotspot) so your Mac, Windows, and Server harnesses can connect directly to this screen.</p>"
-                      "<form id='wifiForm' method='POST' action='/connect'>"
+                      "<p>Select your 2.4GHz Wi-Fi network so your Mac, Windows, and Server harnesses can connect directly to this screen.</p>"
+                      "<form method='POST' action='/connect'>"
                       "<label for='ssid'>Network Name (SSID):</label>"
                       "<select name='ssid' id='ssid'>" + netOptions + "</select>"
                       "<label for='custom_ssid'>Or enter manually:</label>"
                       "<input type='text' name='custom_ssid' id='custom_ssid' placeholder='SSID if hidden'>"
                       "<label for='pass'>Wi-Fi Password:</label>"
-                      "<input type='password' name='pass' id='pass' placeholder='••••••••'>"
-                      "<button type='submit' id='subBtn'>Save and Connect Screen</button>"
-                      "<div id='statusBox'></div>"
+                      "<input type='password' name='pass' id='pass' placeholder='Password'>"
+                      "<button type='submit'>Save and Connect Screen</button>"
                       "</form>"
                       "</div>"
                       "<script>"
                       "document.getElementById('custom_ssid').addEventListener('input', function(e) {"
                       "  if (e.target.value.length > 0) { document.getElementById('ssid').value = ''; }"
-                      "});"
-                      "document.getElementById('wifiForm').addEventListener('submit', function(e) {"
-                      "  var s = document.getElementById('subBtn');"
-                      "  var box = document.getElementById('statusBox');"
-                      "  s.disabled = true;"
-                      "  s.innerText = 'Connecting... Please wait';"
-                      "  box.style.display = 'block';"
-                      "  box.style.background = '#1E293B';"
-                      "  box.style.color = '#38BDF8';"
-                      "  box.innerText = 'Testing connection with SparkAI screen...';"
                       "});"
                       "</script>"
                       "</body></html>";

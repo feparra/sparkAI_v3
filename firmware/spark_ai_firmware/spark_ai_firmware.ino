@@ -31,7 +31,6 @@ Arduino_GFX *gfx = new Arduino_ST7789(bus, LCD_RST, 2, true, LCD_WIDTH, LCD_HEIG
 // Hardware Peripherals
 SparkBuzzer buzzer;
 CST816TTouch touch;
-bool apiServerStarted = false;
 
 // LVGL Draw Buffer (40 lines = 19.2 KB)
 static const uint32_t screenWidth  = 240;
@@ -463,21 +462,16 @@ void setup() {
     }
   );
 
-    // Start REST API server on port 7890 (accessible via 192.168.4.1 and Wi-Fi IP)
-  apiServer.begin(handleIncomingJson);
-  apiServerStarted = true;
-  buzzer.connectChime();
-
   if (wifiManager.isWifiConnected()) {
     pairingModal.hide();
+    apiServer.begin(handleIncomingJson);
+    buzzer.connectChime();
     if (status_label) {
       lv_label_set_text_fmt(status_label, "sparkai.local\n%s", wifiManager.getLocalIp().c_str());
       lv_obj_set_style_text_color(status_label, lv_color_hex(0x4ADE80), 0);
     }
   } else {
-    if (status_label) {
-      lv_label_set_text_fmt(status_label, "Hub: 192.168.4.1\n%s", wifiManager.getSsid().length() > 0 ? "Connecting..." : "Setup Mode");
-    }
+    buzzer.connectChime();
   }
 }
 
@@ -493,20 +487,8 @@ void loop() {
   // 1. Process Wi-Fi Manager (Captive Portal DNS & Server in AP mode)
   wifiManager.handle();
 
-  // Check if Wi-Fi connected in background
-  if (!apiServerStarted && WiFi.status() == WL_CONNECTED) {
-    apiServerStarted = true;
-    pairingModal.hide();
-    apiServer.begin(handleIncomingJson);
-    buzzer.connectChime();
-    if (status_label) {
-      lv_label_set_text_fmt(status_label, "sparkai.local\n%s", WiFi.localIP().toString().c_str());
-      lv_obj_set_style_text_color(status_label, lv_color_hex(0x4ADE80), 0);
-    }
-  }
-
   // 2. Process On-Chip HTTP REST API when connected to Wi-Fi
-  if (apiServerStarted) {
+  if (wifiManager.isWifiConnected()) {
     apiServer.handle();
   }
 
@@ -541,7 +523,7 @@ void loop() {
   // 5. Process CST816T Capacitive Touch Screen
   TouchPoint pt = touch.read();
   if (pt.touched) {
-    // A) If Pairing Modal is open: touch anywhere outside QR (bottom Y > 170 or top Y < 45) closes it!
+    // A) If Pairing Modal is open: touch Dismiss button (bottom Y > 170) or top (Y < 45) closes it!
     if (pairingModal.isModalOpen()) {
       if (pt.y > 170 || pt.y < 45) {
         buzzer.clickTone();
@@ -563,12 +545,11 @@ void loop() {
       buzzer.clickTone();
       String pairToken = "SPARK-" + String(random(1000, 9999));
       String hostIp = wifiManager.getLocalIp();
-      String hostUrl = "http://" + hostIp + ":7890";
+      String hostUrl = (hostIp == "0.0.0.0" || hostIp == "") ? "http://sparkai.local:7890" : ("http://" + hostIp + ":7890");
       String promptText = "Connect to SparkAI at " + hostUrl + " token " + pairToken + ". Bind: POST /api/bind {\"agent\":\"Claude\",\"token\":\"" + pairToken + "\"}. Use /api/notify and /api/task_done.";
       pairingModal.show(lv_screen_active(), promptText, "[ PAIR AGENT ]", pairToken, hostUrl, "Scan QR to copy agent prompt");
       delay(350);
     }
   }
-
   delay(5);
 }
