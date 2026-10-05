@@ -4,6 +4,8 @@
 #include <Arduino.h>
 #include <WebServer.h>
 #include <ArduinoJson.h>
+#include <WiFi.h>
+#include <vector>
 
 class SparkApiServer {
 public:
@@ -42,6 +44,7 @@ private:
     String currentCharacter = "capy";
     String currentState = "calm";
     String currentMessage = "Ready";
+    std::vector<String> boundAgents;
 
     bool isWaitingApproval = false;
     bool pendingApprovalResolved = false;
@@ -51,10 +54,11 @@ private:
     void setCors() {
         server.sendHeader("Access-Control-Allow-Origin", "*");
         server.sendHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
-        server.sendHeader("Access-Control-Allow-Headers", "Content-Type, Authorization");
+        server.sendHeader("Access-Control-Allow-Headers", "Content-Type");
     }
 
     void setupRoutes() {
+        // GET /api/status
         server.on("/api/status", HTTP_OPTIONS, [this]() {
             setCors();
             server.send(204);
@@ -72,12 +76,15 @@ private:
             session["wifi_ip"] = WiFi.localIP().toString();
             session["rssi"] = WiFi.RSSI();
             session["free_heap"] = ESP.getFreeHeap();
+            JsonArray arr = session["boundAgents"].to<JsonArray>();
+            for (size_t i = 0; i < boundAgents.size(); i++) arr.add(boundAgents[i]);
 
-            String output;
-            serializeJson(doc, output);
-            server.send(200, "application/json", output);
+            String res;
+            serializeJson(doc, res);
+            server.send(200, "application/json", res);
         });
 
+        // POST /api/bind
         server.on("/api/bind", HTTP_OPTIONS, [this]() { setCors(); server.send(204); });
         server.on("/api/bind", HTTP_POST, [this]() {
             setCors();
@@ -91,6 +98,12 @@ private:
             String agent = req["agent"] | "Agent";
 
             currentAgent = agent;
+            bool found = false;
+            for (size_t i = 0; i < boundAgents.size(); i++) {
+                if (boundAgents[i] == agent) { found = true; break; }
+            }
+            if (!found) boundAgents.push_back(agent);
+
             JsonDocument cmd;
             cmd["event"] = "agent_connected";
             cmd["agent"] = agent;
@@ -103,6 +116,7 @@ private:
             server.send(200, "application/json", "{\"ok\":true,\"agent\":\"" + agent + "\"}");
         });
 
+        // POST /api/notify
         server.on("/api/notify", HTTP_OPTIONS, [this]() { setCors(); server.send(204); });
         server.on("/api/notify", HTTP_POST, [this]() {
             setCors();
@@ -131,6 +145,7 @@ private:
             server.send(200, "application/json", "{\"ok\":true,\"status\":\"dispatched\"}");
         });
 
+        // POST /api/character
         server.on("/api/character", HTTP_OPTIONS, [this]() { setCors(); server.send(204); });
         server.on("/api/character", HTTP_POST, [this]() {
             setCors();
@@ -141,9 +156,7 @@ private:
             JsonDocument req;
             deserializeJson(req, server.arg("plain"));
             String character = req["character"] | "capy";
-            character.toLowerCase();
             if (character == "spark") character = "capy";
-
             currentCharacter = character;
 
             JsonDocument cmd;
@@ -156,15 +169,14 @@ private:
             server.send(200, "application/json", "{\"ok\":true,\"character\":\"" + character + "\"}");
         });
 
+        // POST /api/task_done
         server.on("/api/task_done", HTTP_OPTIONS, [this]() { setCors(); server.send(204); });
         server.on("/api/task_done", HTTP_POST, [this]() {
             setCors();
-            if (!server.hasArg("plain")) {
-                server.send(400, "application/json", "{\"ok\":false,\"error\":\"Missing body\"}");
-                return;
-            }
             JsonDocument req;
-            deserializeJson(req, server.arg("plain"));
+            if (server.hasArg("plain")) {
+                deserializeJson(req, server.arg("plain"));
+            }
             String summary = req["summary"] | "Task Completed!";
             String agent = req["agent"] | currentAgent.c_str();
 
@@ -182,6 +194,7 @@ private:
             server.send(200, "application/json", "{\"ok\":true,\"status\":\"celebration_triggered\"}");
         });
 
+        // POST /api/approval
         server.on("/api/approval", HTTP_OPTIONS, [this]() { setCors(); server.send(204); });
         server.on("/api/approval", HTTP_POST, [this]() {
             setCors();
@@ -204,14 +217,15 @@ private:
             JsonDocument cmd;
             cmd["event"] = "approval_request";
             cmd["id"] = id;
+            cmd["agent"] = req["agent"] | currentAgent.c_str();
             cmd["question"] = question;
+            cmd["timeout"] = timeoutSec;
             String cmdStr;
             serializeJson(cmd, cmdStr);
             if (cmdCb) cmdCb(cmdStr);
 
-            // Block and wait for screen touch response or timeout
             uint32_t startWait = millis();
-            while (!pendingApprovalResolved && (millis() - startWait < (uint32_t)timeoutSec * 1000)) {
+            while (!pendingApprovalResolved && (millis() - startWait < (uint32_t)(timeoutSec * 1000))) {
                 delay(50);
                 yield();
             }
@@ -228,34 +242,62 @@ private:
 
         // Web Dashboard on GET /
         server.on("/", HTTP_GET, [this]() {
+            String agentsList = "";
+            if (boundAgents.empty()) {
+                agentsList = (currentAgent != "None" && currentAgent.length() > 0) ? currentAgent : "None connected";
+            } else {
+                for (size_t i = 0; i < boundAgents.size(); i++) {
+                    if (i > 0) agentsList += ", ";
+                    agentsList += boundAgents[i];
+                }
+            }
+
             String html = "<!DOCTYPE html><html><head><meta charset='utf-8'><meta name='viewport' content='width=device-width,initial-scale=1'>"
                           "<title>SparkAI V3 On-Chip Hub</title>"
                           "<style>"
                           "body{background:#0F172A;color:#E2E8F0;font-family:sans-serif;margin:0;padding:24px;display:flex;justify-content:center;}"
-                          ".card{background:#1E293B;border:1px solid #334155;border-radius:16px;max-width:440px;width:100%;padding:24px;box-shadow:0 10px 25px rgba(0,0,0,0.5);}"
+                          ".card{background:#1E293B;border:1px solid #334155;border-radius:16px;max-width:440px;width:100%;padding:24px;box-shadow:0 10px 25px rgba(0,0,0,0.5);box-sizing:border-box;}"
                           "h1{color:#38BDF8;font-size:24px;margin-top:0;display:flex;align-items:center;gap:8px;}"
                           ".status-pill{display:inline-block;padding:6px 12px;border-radius:20px;font-size:12px;font-weight:700;margin-bottom:16px;}"
                           ".pill-online{background:#065F46;color:#34D399;}"
-                          ".row{display:flex;justify-content:space-between;padding:10px 0;border-bottom:1px solid #334155;font-size:14px;}"
-                          ".val{font-weight:600;color:#F8FAFC;}"
+                          ".row{display:flex;justify-content:space-between;padding:10px 0;border-bottom:1px solid #334155;font-size:14px;gap:12px;}"
+                          ".val{font-weight:600;color:#F8FAFC;text-align:right;}"
                           ".btn-group{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:20px;}"
-                          "button{padding:12px;background:#0284C7;color:#FFF;border:none;border-radius:8px;font-weight:600;cursor:pointer;}"
+                          "button{padding:12px;background:#0284C7;color:#FFF;border:none;border-radius:8px;font-weight:600;cursor:pointer;transition:all 0.2s;}"
                           "button:hover{background:#0369A1;}"
+                          "#copyBtn{grid-column:span 2;background:linear-gradient(135deg,#0284C7,#2563EB);font-size:15px;padding:14px;font-weight:700;}"
+                          "#copyBtn:hover{background:linear-gradient(135deg,#0369A1,#1D4ED8);}"
                           "</style></head><body>"
                           "<div class='card'>"
                           "<h1>⚡ SparkAI V3 Screen</h1>"
                           "<div class='status-pill pill-online'>● STANDALONE ON-CHIP HUB ACTIVE</div>"
                           "<div class='row'><span>Active Agent:</span><span class='val'>" + currentAgent + "</span></div>"
+                          "<div class='row'><span>Connected Harnesses:</span><span class='val' style='color:#38BDF8;'>" + agentsList + "</span></div>"
                           "<div class='row'><span>Companion Character:</span><span class='val'>" + currentCharacter + "</span></div>"
                           "<div class='row'><span>Current State:</span><span class='val'>" + currentState + "</span></div>"
                           "<div class='row'><span>Message:</span><span class='val'>" + currentMessage + "</span></div>"
                           "<div class='row'><span>Wi-Fi IP Address:</span><span class='val'>" + WiFi.localIP().toString() + "</span></div>"
                           "<div class='row'><span>mDNS Hostname:</span><span class='val'>sparkai.local:7890</span></div>"
                           "<div class='btn-group'>"
+                          "<button id='copyBtn' onclick='copyPrompt()'>📋 Connect Harness (Copy Prompt)</button>"
                           "<button onclick='fetch(\"/api/notify\",{method:\"POST\",body:JSON.stringify({state:\"working\",message:\"Web Dashboard Ping!\"})})'>Send Ping</button>"
                           "<button onclick='fetch(\"/api/task_done\",{method:\"POST\",body:JSON.stringify({summary:\"Celebration from Web!\"})})'>Celebration Chime</button>"
                           "</div>"
-                          "</div></body></html>";
+                          "</div>"
+                          "<script>"
+                          "function copyPrompt() {"
+                          "  const host = window.location.host;"
+                          "  const p = 'Connect to SparkAI companion at http://' + host + '.\\n\\nAlways interact with the screen:\\n1. Bind: POST http://' + host + '/api/bind with {\"agent\":\"Claude\",\"token\":\"SPARK-CONNECT\"}\\n2. Working: POST http://' + host + '/api/notify with {\"agent\":\"Claude\",\"state\":\"working\",\"message\":\"...\"}\\n3. Done: POST http://' + host + '/api/task_done with {\"agent\":\"Claude\",\"summary\":\"...\"}\\n4. Approval: POST http://' + host + '/api/approval with {\"agent\":\"Claude\",\"question\":\"...\"}';"
+                          "  navigator.clipboard.writeText(p).then(() => {"
+                          "    const b = document.getElementById('copyBtn');"
+                          "    const old = b.innerText;"
+                          "    b.innerText = '✓ Prompt Copied to Clipboard!';"
+                          "    b.style.background = '#059669';"
+                          "    setTimeout(() => { b.innerText = old; b.style.background = 'linear-gradient(135deg,#0284C7,#2563EB)'; }, 2500);"
+                          "  });"
+                          "}"
+                          "</script>"
+                          "</body></html>";
             server.send(200, "text/html", html);
         });
     }

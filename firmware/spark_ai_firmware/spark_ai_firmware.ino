@@ -522,8 +522,16 @@ void loop() {
   // 5. Process CST816T Capacitive Touch Screen
   TouchPoint pt = touch.read();
   if (pt.touched) {
-    // A) Approval Buttons Touch (Bottom area Y > 170)
-    if (currentState == "waiting" && currentApprovalId.length() > 0 && pt.y > 170) {
+    // A) If Pairing Modal is open: touch Dismiss button (bottom Y > 180) or outside closes it!
+    if (pairingModal.isModalOpen()) {
+      if (pt.y > 180 || pt.y < 45) {
+        buzzer.clickTone();
+        pairingModal.hide();
+        delay(300);
+      }
+    }
+    // B) Approval Buttons Touch (Bottom area Y > 170)
+    else if (currentState == "waiting" && currentApprovalId.length() > 0 && pt.y > 170) {
       if (pt.x < 120) {
         sendApprovalResponse(currentApprovalId, "Approve", "touch_screen");
       } else {
@@ -531,7 +539,7 @@ void loop() {
       }
       delay(350);
     }
-    // B) Tap Top Badge (Y < 50) to open on-screen Agent Pairing Token Modal!
+    // C) Tap Top Badge (Y < 50) to open on-screen Agent Pairing Token Modal!
     else if (currentState != "waiting" && pt.y < 50 && !pairingModal.isModalOpen()) {
       buzzer.clickTone();
       String pairToken = "SPARK-" + String(random(1000, 9999));
