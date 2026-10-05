@@ -31,6 +31,7 @@ Arduino_GFX *gfx = new Arduino_ST7789(bus, LCD_RST, 2, true, LCD_WIDTH, LCD_HEIG
 // Hardware Peripherals
 SparkBuzzer buzzer;
 CST816TTouch touch;
+bool apiServerStarted = false;
 
 // LVGL Draw Buffer (40 lines = 19.2 KB)
 static const uint32_t screenWidth  = 240;
@@ -462,15 +463,21 @@ void setup() {
     }
   );
 
+    // Start REST API server on port 7890 (accessible via 192.168.4.1 and Wi-Fi IP)
+  apiServer.begin(handleIncomingJson);
+  apiServerStarted = true;
+  buzzer.connectChime();
+
   if (wifiManager.isWifiConnected()) {
     pairingModal.hide();
-    apiServer.begin(handleIncomingJson);
-    buzzer.connectChime();
     if (status_label) {
       lv_label_set_text_fmt(status_label, "sparkai.local\n%s", wifiManager.getLocalIp().c_str());
+      lv_obj_set_style_text_color(status_label, lv_color_hex(0x4ADE80), 0);
     }
   } else {
-    buzzer.connectChime();
+    if (status_label) {
+      lv_label_set_text_fmt(status_label, "Hub: 192.168.4.1\n%s", wifiManager.getSsid().length() > 0 ? "Connecting..." : "Setup Mode");
+    }
   }
 }
 
@@ -486,8 +493,20 @@ void loop() {
   // 1. Process Wi-Fi Manager (Captive Portal DNS & Server in AP mode)
   wifiManager.handle();
 
+  // Check if Wi-Fi connected in background
+  if (!apiServerStarted && WiFi.status() == WL_CONNECTED) {
+    apiServerStarted = true;
+    pairingModal.hide();
+    apiServer.begin(handleIncomingJson);
+    buzzer.connectChime();
+    if (status_label) {
+      lv_label_set_text_fmt(status_label, "sparkai.local\n%s", WiFi.localIP().toString().c_str());
+      lv_obj_set_style_text_color(status_label, lv_color_hex(0x4ADE80), 0);
+    }
+  }
+
   // 2. Process On-Chip HTTP REST API when connected to Wi-Fi
-  if (wifiManager.isWifiConnected()) {
+  if (apiServerStarted) {
     apiServer.handle();
   }
 
@@ -522,9 +541,9 @@ void loop() {
   // 5. Process CST816T Capacitive Touch Screen
   TouchPoint pt = touch.read();
   if (pt.touched) {
-    // A) If Pairing Modal is open: touch Dismiss button (bottom Y > 180) or outside closes it!
+    // A) If Pairing Modal is open: touch anywhere outside QR (bottom Y > 170 or top Y < 45) closes it!
     if (pairingModal.isModalOpen()) {
-      if (pt.y > 180 || pt.y < 45) {
+      if (pt.y > 170 || pt.y < 45) {
         buzzer.clickTone();
         pairingModal.hide();
         delay(300);
