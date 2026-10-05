@@ -7,13 +7,14 @@
 #include <DNSServer.h>
 #include <ESPmDNS.h>
 #include <Preferences.h>
+#include <lvgl.h>
 
 class SparkWiFiManager {
 public:
     SparkWiFiManager() : server(80), dnsServer(), isApMode(false), isConnected(false) {}
 
     typedef void (*StatusCallback)(const String& status, const String& details);
-    typedef void (*QrCallback)(const String& qrPayload, const String& title, const String& instructions);
+    typedef void (*QrCallback)(const String& qrPayload, const String& title, const String& instructions, const String& subText);
 
     void begin(StatusCallback onStatus = nullptr, QrCallback onQr = nullptr) {
         statusCb = onStatus;
@@ -22,10 +23,18 @@ public:
 
         storedSsid = prefs.getString("ssid", "");
         storedPass = prefs.getString("pass", "");
+        prefs.end();
+
+        Serial.printf("[WiFi] Stored SSID: '%s'\n", storedSsid.c_str());
 
         if (storedSsid.length() > 0) {
-            connectToSavedWifi();
+            bool ok = connectToSavedWifi();
+            if (!ok) {
+                Serial.println("[WiFi] Connection to saved network failed. Starting setup AP...");
+                startCaptivePortal();
+            }
         } else {
+            Serial.println("[WiFi] No saved credentials. Starting setup AP...");
             startCaptivePortal();
         }
     }
@@ -50,10 +59,79 @@ public:
     }
 
     void resetWifi() {
+        prefs.begin("spark_wifi", false);
         prefs.remove("ssid");
         prefs.remove("pass");
+        prefs.end();
+        storedSsid = "";
+        storedPass = "";
         WiFi.disconnect(true, true);
         startCaptivePortal();
+    }
+
+    bool connectToSavedWifi() {
+        isApMode = false;
+        WiFi.disconnect(true, true);
+        delay(200);
+        WiFi.mode(WIFI_STA);
+        delay(100);
+        WiFi.setSleep(false);
+        WiFi.setAutoReconnect(true);
+
+        Serial.printf("[WiFi] Connecting to '%s'...\n", storedSsid.c_str());
+        notifyStatus("Connecting Wi-Fi", storedSsid);
+
+        WiFi.begin(storedSsid.c_str(), storedPass.c_str());
+
+        uint32_t startAttempt = millis();
+        int attempts = 0;
+        // Allow up to 20 seconds for slow 2.4GHz routers/DHCP negotiation
+        while (WiFi.status() != WL_CONNECTED && (millis() - startAttempt) < 20000) {
+            delay(250);
+            attempts++;
+            if (attempts % 4 == 0) {
+                int secElapsed = (millis() - startAttempt) / 1000;
+                String dots = "";
+                for (int d = 0; d < (attempts / 4) % 4; d++) dots += ".";
+                notifyStatus("Connecting Wi-Fi", storedSsid + " (" + String(secElapsed) + "s)" + dots);
+            }
+            lv_timer_handler();
+        }
+
+        if (WiFi.status() == WL_CONNECTED) {
+            isConnected = true;
+            String ipStr = WiFi.localIP().toString();
+            Serial.printf("[WiFi] Connected! IP: %s\n", ipStr.c_str());
+            MDNS.begin("sparkai");
+            MDNS.addService("http", "tcp", 7890);
+            notifyStatus("Wi-Fi Connected!", "IP: " + ipStr);
+            return true;
+        } else {
+            Serial.printf("[WiFi] Connection failed (status code: %d)\n", WiFi.status());
+            notifyStatus("Wi-Fi Failed", "Starting AP...");
+            return false;
+        }
+    }
+
+    void startCaptivePortal() {
+        isApMode = true;
+        isConnected = false;
+        WiFi.disconnect(true, true);
+        delay(100);
+        WiFi.mode(WIFI_AP);
+        WiFi.softAP("SparkAI-Setup");
+
+        IPAddress apIP(192, 168, 4, 1);
+        WiFi.softAPConfig(apIP, apIP, IPAddress(255, 255, 255, 0));
+
+        dnsServer.setErrorReplyCode(DNSReplyCode::NoError);
+        dnsServer.start(53, "*", apIP);
+
+        setupWebServerRoutes();
+        server.begin();
+
+        notifyStatus("Wi-Fi Setup Mode", "Join: SparkAI-Setup");
+        notifyQr("WIFI:S:SparkAI-Setup;;", "[ WI-FI SETUP ]", "1. Join 'SparkAI-Setup'\n2. Open 192.168.4.1", "SparkAI-Setup");
     }
 
 private:
@@ -71,53 +149,8 @@ private:
         if (statusCb) statusCb(status, details);
     }
 
-    void notifyQr(const String& payload, const String& title, const String& instructions) {
-        if (qrCb) qrCb(payload, title, instructions);
-    }
-
-    void connectToSavedWifi() {
-        isApMode = false;
-        WiFi.mode(WIFI_STA);
-        WiFi.setSleep(false);
-        WiFi.begin(storedSsid.c_str(), storedPass.c_str());
-
-        notifyStatus("Connecting Wi-Fi", storedSsid);
-
-        uint32_t startAttempt = millis();
-        while (WiFi.status() != WL_CONNECTED && millis() - startAttempt < 8000) {
-            delay(250);
-            yield();
-        }
-
-        if (WiFi.status() == WL_CONNECTED) {
-            isConnected = true;
-            String ipStr = WiFi.localIP().toString();
-            MDNS.begin("sparkai");
-            MDNS.addService("http", "tcp", 7890);
-            notifyStatus("Wi-Fi Connected!", "IP: " + ipStr);
-        } else {
-            notifyStatus("Wi-Fi Failed", "Starting Setup AP...");
-            startCaptivePortal();
-        }
-    }
-
-    void startCaptivePortal() {
-        isApMode = true;
-        isConnected = false;
-        WiFi.mode(WIFI_AP);
-        WiFi.softAP("SparkAI-Setup");
-
-        IPAddress apIP(192, 168, 4, 1);
-        WiFi.softAPConfig(apIP, apIP, IPAddress(255, 255, 255, 0));
-
-        dnsServer.setErrorReplyCode(DNSReplyCode::NoError);
-        dnsServer.start(53, "*", apIP);
-
-        setupWebServerRoutes();
-        server.begin();
-
-        notifyStatus("Wi-Fi Setup Mode", "Join: SparkAI-Setup");
-        notifyQr("WIFI:S:SparkAI-Setup;;", "WIFI SETUP", "1. Join SparkAI-Setup\n2. Open 192.168.4.1");
+    void notifyQr(const String& payload, const String& title, const String& instructions, const String& subText) {
+        if (qrCb) qrCb(payload, title, instructions, subText);
     }
 
     void setupWebServerRoutes() {
@@ -130,14 +163,19 @@ private:
             String pass = server.arg("pass");
             String custom = server.arg("custom_ssid");
             if (custom.length() > 0) ssid = custom;
+            ssid.trim();
+            pass.trim();
 
             if (ssid.length() == 0) {
                 server.send(400, "text/html", "<h3>SSID cannot be empty</h3><a href='/'>Back</a>");
                 return;
             }
 
+            prefs.begin("spark_wifi", false);
             prefs.putString("ssid", ssid);
             prefs.putString("pass", pass);
+            prefs.end();
+
             storedSsid = ssid;
             storedPass = pass;
 
@@ -192,7 +230,7 @@ private:
                       "<label for='custom_ssid'>Or enter manually:</label>"
                       "<input type='text' name='custom_ssid' id='custom_ssid' placeholder='SSID if hidden'>"
                       "<label for='pass'>Wi-Fi Password:</label>"
-                      "<input type='password' name='pass' id='pass' placeholder='••••••••'>"
+                      "<input type='password' name='pass' id='pass' placeholder='Password'>"
                       "<button type='submit'>Save and Connect Screen</button>"
                       "</form>"
                       "</div>"

@@ -6,10 +6,10 @@
 
 class AgentPairingModal {
 public:
-    AgentPairingModal() : modal(NULL), qr_obj(NULL), token_label(NULL), instr_label(NULL), close_btn(NULL), isOpen(false) {}
+    AgentPairingModal() : modal(NULL), qr_obj(NULL), title_label(NULL), token_label(NULL), instr_label(NULL), close_btn(NULL), isOpen(false) {}
 
-    void show(lv_obj_t *parent, const String& token) {
-        currentToken = token;
+    void show(lv_obj_t *parent, const String& qrPayload, const String& titleText = "[ PAIR NEW AGENT ]", const String& subText = "", const String& instrText = "Tell your AI harness:\n'Connect with this token'") {
+        currentToken = subText.length() > 0 ? subText : qrPayload;
         isOpen = true;
 
         if (!modal) {
@@ -23,10 +23,9 @@ public:
             lv_obj_remove_flag(modal, LV_OBJ_FLAG_SCROLLABLE);
 
             // Title
-            lv_obj_t *title = lv_label_create(modal);
-            lv_label_set_text(title, "[ PAIR NEW AGENT ]");
-            lv_obj_set_style_text_color(title, lv_color_hex(0x38BDF8), 0);
-            lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 4);
+            title_label = lv_label_create(modal);
+            lv_obj_set_style_text_color(title_label, lv_color_hex(0x38BDF8), 0);
+            lv_obj_align(title_label, LV_ALIGN_TOP_MID, 0, 4);
 
             // QR Code (110x110)
             #if LV_USE_QRCODE
@@ -34,14 +33,14 @@ public:
             lv_qrcode_set_size(qr_obj, 110);
             lv_qrcode_set_dark_color(qr_obj, lv_color_hex(0x000000));
             lv_qrcode_set_light_color(qr_obj, lv_color_hex(0xFFFFFF));
-            lv_obj_align(qr_obj, LV_ALIGN_TOP_MID, 0, 28);
+            lv_obj_align(qr_obj, LV_ALIGN_TOP_MID, 0, 26);
             #endif
 
-            // Token in Large Font
+            // Token / SubText
             token_label = lv_label_create(modal);
-            lv_obj_set_style_text_font(token_label, &lv_font_montserrat_20, 0);
+            lv_obj_set_style_text_font(token_label, &lv_font_montserrat_18, 0);
             lv_obj_set_style_text_color(token_label, lv_color_hex(0xFBBF24), 0);
-            lv_obj_align(token_label, LV_ALIGN_TOP_MID, 0, 146);
+            lv_obj_align(token_label, LV_ALIGN_TOP_MID, 0, 142);
 
             // Instructions
             instr_label = lv_label_create(modal);
@@ -49,8 +48,7 @@ public:
             lv_label_set_long_mode(instr_label, LV_LABEL_LONG_WRAP);
             lv_obj_set_style_text_align(instr_label, LV_TEXT_ALIGN_CENTER, 0);
             lv_obj_set_style_text_color(instr_label, lv_color_hex(0x94A3B8), 0);
-            lv_label_set_text(instr_label, "Tell your AI harness:\n'Connect with this token'");
-            lv_obj_align(instr_label, LV_ALIGN_TOP_MID, 0, 174);
+            lv_obj_align(instr_label, LV_ALIGN_TOP_MID, 0, 168);
 
             // Close button
             close_btn = lv_button_create(modal);
@@ -68,17 +66,26 @@ public:
             }, LV_EVENT_CLICKED, this);
         }
 
+        if (title_label) {
+            lv_label_set_text(title_label, titleText.c_str());
+        }
+
         #if LV_USE_QRCODE
         if (qr_obj) {
-            lv_qrcode_update(qr_obj, token.c_str(), token.length());
+            lv_qrcode_update(qr_obj, qrPayload.c_str(), qrPayload.length());
         }
         #endif
 
         if (token_label) {
-            lv_label_set_text(token_label, token.c_str());
+            lv_label_set_text(token_label, currentToken.c_str());
+        }
+
+        if (instr_label) {
+            lv_label_set_text(instr_label, instrText.c_str());
         }
 
         lv_obj_clear_flag(modal, LV_OBJ_FLAG_HIDDEN);
+        lv_obj_move_foreground(modal);
     }
 
     void hide() {
@@ -99,6 +106,7 @@ public:
 private:
     lv_obj_t *modal;
     lv_obj_t *qr_obj;
+    lv_obj_t *title_label;
     lv_obj_t *token_label;
     lv_obj_t *instr_label;
     lv_obj_t *close_btn;

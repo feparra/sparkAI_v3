@@ -457,12 +457,13 @@ void setup() {
         lv_label_set_text_fmt(status_label, "%s\n%s", status.c_str(), details.c_str());
       }
     },
-    [](const String& qrPayload, const String& title, const String& instructions) {
-      pairingModal.show(lv_screen_active(), qrPayload);
+    [](const String& qrPayload, const String& title, const String& instructions, const String& subText) {
+      pairingModal.show(lv_screen_active(), qrPayload, title, subText, instructions);
     }
   );
 
   if (wifiManager.isWifiConnected()) {
+    pairingModal.hide();
     apiServer.begin(handleIncomingJson);
     buzzer.connectChime();
     if (status_label) {
