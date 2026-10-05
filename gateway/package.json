@@ -1,0 +1,15 @@
+{
+  "name": "sparkai-gateway",
+  "version": "3.0.0",
+  "description": "SparkAI V3 Multi-Agent Gateway & Event Hub",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "ws": "^8.18.0"
+  },
+  "keywords": ["sparkai", "esp32", "mcp", "agent-companion"],
+  "author": "Antigravity & SparkAI Team",
+  "license": "MIT"
+}
