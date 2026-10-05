@@ -15,6 +15,14 @@
 #include "pin_config.h"
 #include "buzzer.h"
 #include "touch_cst816.h"
+#include "wifi_manager.h"
+#include "web_api_server.h"
+#include "agent_pairing_modal.h"
+
+// Wi-Fi, On-Chip REST API & Pairing Modal
+SparkWiFiManager wifiManager;
+SparkApiServer apiServer(7890);
+AgentPairingModal pairingModal;
 
 // Hardware Bus & Display Driver (Portrait: 240x280, gap offset: 0, 20)
 Arduino_DataBus *bus = new Arduino_ESP32SPI(LCD_DC, LCD_CS, LCD_SCK, LCD_MOSI);
@@ -258,6 +266,7 @@ void sendApprovalResponse(const String& id, const String& choice, const String& 
   String output;
   serializeJson(doc, output);
   Serial.println(output);
+  apiServer.resolveApproval(choice, source);
 
   hideApprovalDialog();
   currentApprovalId = "";
@@ -304,6 +313,7 @@ void handleIncomingJson(const String& jsonStr) {
     buzzer.tripleBeepDone(); // Triple Beep Celebration Melody
   }
   else if (event == "agent_connected") {
+    pairingModal.hide();
     String agent = doc["agent"] | "Agent";
     currentAgent = agent;
     lv_label_set_text_fmt(agent_badge_label, "[ %s ONLINE ]", agent.c_str());
@@ -340,6 +350,7 @@ void handleIncomingJson(const String& jsonStr) {
       lv_obj_set_style_text_color(status_label, lv_color_hex(0xFFFFFF), 0);
     }
   }
+  apiServer.setStatusData(currentAgent, currentCharacter, currentState, (status_label ? lv_label_get_text(status_label) : ""));
 }
 
 void setup() {
@@ -438,7 +449,28 @@ void setup() {
   updateCharacterAnimation(currentCharacter, "calm");
 
   lastTick = millis();
-  buzzer.connectChime();
+
+  // Initialize Wi-Fi Manager (Connect to saved network or launch SoftAP setup portal)
+  wifiManager.begin(
+    [](const String& status, const String& details) {
+      if (status_label) {
+        lv_label_set_text_fmt(status_label, "%s\n%s", status.c_str(), details.c_str());
+      }
+    },
+    [](const String& qrPayload, const String& title, const String& instructions) {
+      pairingModal.show(lv_screen_active(), qrPayload);
+    }
+  );
+
+  if (wifiManager.isWifiConnected()) {
+    apiServer.begin(handleIncomingJson);
+    buzzer.connectChime();
+    if (status_label) {
+      lv_label_set_text_fmt(status_label, "sparkai.local\n%s", wifiManager.getLocalIp().c_str());
+    }
+  } else {
+    buzzer.connectChime();
+  }
 }
 
 void loop() {
@@ -450,7 +482,15 @@ void loop() {
   }
   lv_timer_handler();
 
-  // 1. Process Serial JSON stream from Gateway
+  // 1. Process Wi-Fi Manager (Captive Portal DNS & Server in AP mode)
+  wifiManager.handle();
+
+  // 2. Process On-Chip HTTP REST API when connected to Wi-Fi
+  if (wifiManager.isWifiConnected()) {
+    apiServer.handle();
+  }
+
+  // 3. Process Serial JSON stream from USB (Gateway / Local Bridge)
   if (Serial.available()) {
     String payload = Serial.readStringUntil('\n');
     payload.trim();
@@ -459,9 +499,8 @@ void loop() {
     }
   }
 
-  // 2. Process Physical Hardware Buttons for Approvals
+  // 4. Process Physical Hardware Buttons for Approvals
   if (currentState == "waiting" && currentApprovalId.length() > 0) {
-    // Physical BOOT Button (GPIO0) -> Instant APPROVE
     if (digitalRead(BTN_BOOT) == LOW) {
       delay(40);
       if (digitalRead(BTN_BOOT) == LOW) {
@@ -470,7 +509,6 @@ void loop() {
       }
     }
 
-    // Physical PWR Button (GPIO40) -> Instant DENY
     if (digitalRead(BTN_PWR) == LOW) {
       delay(40);
       if (digitalRead(BTN_PWR) == LOW) {
@@ -480,19 +518,24 @@ void loop() {
     }
   }
 
-  // 3. Process CST816T Capacitive Touch Screen (Portrait Calibrated)
+  // 5. Process CST816T Capacitive Touch Screen
   TouchPoint pt = touch.read();
-  if (pt.touched && currentState == "waiting" && currentApprovalId.length() > 0) {
-    // Bottom area where buttons reside (y > 170 in 240x280 space)
-    if (pt.y > 170) {
+  if (pt.touched) {
+    // A) Approval Buttons Touch (Bottom area Y > 170)
+    if (currentState == "waiting" && currentApprovalId.length() > 0 && pt.y > 170) {
       if (pt.x < 120) {
-        // Left half -> APPROVE (Green button)
         sendApprovalResponse(currentApprovalId, "Approve", "touch_screen");
       } else {
-        // Right half -> DENY (Red button)
         sendApprovalResponse(currentApprovalId, "Deny", "touch_screen");
       }
-      delay(350); // Debounce touch
+      delay(350);
+    }
+    // B) Tap Top Badge (Y < 50) to open on-screen Agent Pairing Token Modal!
+    else if (currentState != "waiting" && pt.y < 50 && !pairingModal.isModalOpen()) {
+      buzzer.clickTone();
+      String pairToken = "SPARK-" + String(random(1000, 9999));
+      pairingModal.show(lv_screen_active(), pairToken);
+      delay(350);
     }
   }
 

@@ -1,0 +1,24 @@
+﻿# SparkAI Physical Screen Companion Protocol
+
+You have access to a physical Waveshare ESP32-S3 hardware companion via the SparkAI MCP server.
+You MUST integrate the physical screen into your workflow autonomously at every stage:
+
+1. **Session Start / Task Pickup:**
+   - Always notify the user's desk companion when beginning work:
+     `spark_notify(state="working", message="<Short 2-4 word summary>")`
+   - Example: `spark_notify(state="working", message="Analyzing schema...")`
+
+2. **Human-In-The-Loop Approval (CRITICAL):**
+   - BEFORE executing any terminal/shell command, destructive file operation, git push, or deployment:
+     You MUST call `spark_ask_approval(question="...", details="...")`.
+   - The hardware buzzer will ring a double beep alert and display your question with [Approve]/[Deny] buttons.
+   - Wait for the human to physically touch the screen or press the physical BOOT button before continuing.
+   - If denied, halt execution immediately and ask the user how to proceed.
+
+3. **Task Completion & Celebration:**
+   - When all requested work and tests are done, you MUST call:
+     `spark_task_done(summary="<Short success message>")`
+   - This rings the hardware celebration melody and triggers the celebration animation!
+
+4. **Companion Character Switch:**
+   - If the user asks to switch their desk companion, call `spark_switch_character(character="capy" | "kitty" | "astro" | "dr_octopus" | "llama" | "piper")`.

@@ -1,4 +1,4 @@
-﻿#!/usr/bin/env python3
+#!/usr/bin/env python3
 """
 SparkAI V3 - Universal Model Context Protocol (MCP) Server
 Allows any AI Agent (Claude Desktop, Antigravity IDE, Hermes, Cursor, Codex, OpenClaw)
@@ -21,10 +21,12 @@ if sys.stdout.encoding != 'utf-8':
     except Exception:
         pass
 
-GATEWAY_PORT = 7890
+import os
+GATEWAY_PORT = int(os.environ.get("SPARK_PORT", 7890))
+SPARK_HOST = os.environ.get("SPARK_HOST", f"http://localhost:{GATEWAY_PORT}").rstrip("/")
 
 def send_gateway_request(endpoint, data=None, method=None, timeout=120):
-    url = f"http://localhost:{GATEWAY_PORT}{endpoint}"
+    url = f"{SPARK_HOST}{endpoint}"
     req_data = json.dumps(data).encode('utf-8') if data is not None else None
     headers = {"Content-Type": "application/json"} if data is not None else {}
     req = urllib.request.Request(url, data=req_data, headers=headers)
