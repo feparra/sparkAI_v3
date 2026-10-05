@@ -6,15 +6,15 @@
 
 class AgentPairingModal {
 public:
-    AgentPairingModal() : modal(NULL), qr_obj(NULL), title_label(NULL), token_label(NULL), instr_label(NULL), close_btn(NULL), isOpen(false) {}
+    AgentPairingModal() : modal(NULL), qr_obj(NULL), title_label(NULL), token_label(NULL), url_label(NULL), instr_label(NULL), close_btn(NULL), isOpen(false) {}
 
-    void show(lv_obj_t *parent, const String& qrPayload, const String& titleText = "[ PAIR NEW AGENT ]", const String& subText = "", const String& instrText = "Tell your AI harness:\n'Connect with this token'") {
-        currentToken = subText.length() > 0 ? subText : qrPayload;
+    void show(lv_obj_t *parent, const String& qrPayload, const String& titleText = "[ PAIR AGENT ]", const String& tokenText = "", const String& urlText = "", const String& instrText = "Scan QR to copy prompt") {
+        currentToken = tokenText.length() > 0 ? tokenText : qrPayload;
         isOpen = true;
 
         if (!modal) {
             modal = lv_obj_create(parent);
-            lv_obj_set_size(modal, 236, 260);
+            lv_obj_set_size(modal, 236, 264);
             lv_obj_align(modal, LV_ALIGN_CENTER, 0, 0);
             lv_obj_set_style_bg_color(modal, lv_color_hex(0x0F172A), 0);
             lv_obj_set_style_border_color(modal, lv_color_hex(0x38BDF8), 0);
@@ -25,22 +25,27 @@ public:
             // Title
             title_label = lv_label_create(modal);
             lv_obj_set_style_text_color(title_label, lv_color_hex(0x38BDF8), 0);
-            lv_obj_align(title_label, LV_ALIGN_TOP_MID, 0, 4);
+            lv_obj_align(title_label, LV_ALIGN_TOP_MID, 0, 2);
 
-            // QR Code (110x110)
+            // QR Code (116x116)
             #if LV_USE_QRCODE
             qr_obj = lv_qrcode_create(modal);
-            lv_qrcode_set_size(qr_obj, 110);
+            lv_qrcode_set_size(qr_obj, 116);
             lv_qrcode_set_dark_color(qr_obj, lv_color_hex(0x000000));
             lv_qrcode_set_light_color(qr_obj, lv_color_hex(0xFFFFFF));
-            lv_obj_align(qr_obj, LV_ALIGN_TOP_MID, 0, 26);
+            lv_obj_align(qr_obj, LV_ALIGN_TOP_MID, 0, 22);
             #endif
 
-            // Token / SubText
+            // Token in Large Gold Font
             token_label = lv_label_create(modal);
             lv_obj_set_style_text_font(token_label, &lv_font_montserrat_18, 0);
             lv_obj_set_style_text_color(token_label, lv_color_hex(0xFBBF24), 0);
             lv_obj_align(token_label, LV_ALIGN_TOP_MID, 0, 142);
+
+            // Host URL in Cyan
+            url_label = lv_label_create(modal);
+            lv_obj_set_style_text_color(url_label, lv_color_hex(0x38BDF8), 0);
+            lv_obj_align(url_label, LV_ALIGN_TOP_MID, 0, 164);
 
             // Instructions
             instr_label = lv_label_create(modal);
@@ -48,11 +53,11 @@ public:
             lv_label_set_long_mode(instr_label, LV_LABEL_LONG_WRAP);
             lv_obj_set_style_text_align(instr_label, LV_TEXT_ALIGN_CENTER, 0);
             lv_obj_set_style_text_color(instr_label, lv_color_hex(0x94A3B8), 0);
-            lv_obj_align(instr_label, LV_ALIGN_TOP_MID, 0, 168);
+            lv_obj_align(instr_label, LV_ALIGN_TOP_MID, 0, 184);
 
             // Close button
             close_btn = lv_button_create(modal);
-            lv_obj_set_size(close_btn, 110, 32);
+            lv_obj_set_size(close_btn, 110, 30);
             lv_obj_align(close_btn, LV_ALIGN_BOTTOM_MID, 0, -4);
             lv_obj_set_style_bg_color(close_btn, lv_color_hex(0x334155), 0);
             lv_obj_set_style_radius(close_btn, 6, 0);
@@ -78,6 +83,10 @@ public:
 
         if (token_label) {
             lv_label_set_text(token_label, currentToken.c_str());
+        }
+
+        if (url_label) {
+            lv_label_set_text(url_label, urlText.c_str());
         }
 
         if (instr_label) {
@@ -108,6 +117,7 @@ private:
     lv_obj_t *qr_obj;
     lv_obj_t *title_label;
     lv_obj_t *token_label;
+    lv_obj_t *url_label;
     lv_obj_t *instr_label;
     lv_obj_t *close_btn;
     bool isOpen;

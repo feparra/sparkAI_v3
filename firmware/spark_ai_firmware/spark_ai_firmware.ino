@@ -458,7 +458,7 @@ void setup() {
       }
     },
     [](const String& qrPayload, const String& title, const String& instructions, const String& subText) {
-      pairingModal.show(lv_screen_active(), qrPayload, title, subText, instructions);
+      pairingModal.show(lv_screen_active(), qrPayload, title, subText, "http://192.168.4.1", instructions);
     }
   );
 
@@ -535,7 +535,10 @@ void loop() {
     else if (currentState != "waiting" && pt.y < 50 && !pairingModal.isModalOpen()) {
       buzzer.clickTone();
       String pairToken = "SPARK-" + String(random(1000, 9999));
-      pairingModal.show(lv_screen_active(), pairToken);
+      String hostIp = wifiManager.getLocalIp();
+      String hostUrl = "http://" + hostIp + ":7890";
+      String promptText = "Connect to SparkAI at " + hostUrl + " token " + pairToken + ". Bind: POST /api/bind {\"agent\":\"Claude\",\"token\":\"" + pairToken + "\"}. Use /api/notify and /api/task_done.";
+      pairingModal.show(lv_screen_active(), promptText, "[ PAIR AGENT ]", pairToken, hostUrl, "Scan QR to copy agent prompt");
       delay(350);
     }
   }
