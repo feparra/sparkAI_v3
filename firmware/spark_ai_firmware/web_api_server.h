@@ -291,7 +291,8 @@ private:
                           "<script>"
                           "function getPrompt() {"
                           "  var h = window.location.host;"
-                          "  return 'Connect to SparkAI companion at http://' + h + '.\\n\\nAlways interact with the screen:\\n1. Bind: POST http://' + h + '/api/bind with {\"agent\":\"Claude\",\"token\":\"SPARK-CONNECT\"}\\n2. Working: POST http://' + h + '/api/notify with {\"agent\":\"Claude\",\"state\":\"working\",\"message\":\"...\"}\\n3. Done: POST http://' + h + '/api/task_done with {\"agent\":\"Claude\",\"summary\":\"...\"}\\n4. Approval: POST http://' + h + '/api/approval with {\"agent\":\"Claude\",\"question\":\"...\"}';"
+                          "  var ct = ' -H \"Content-Type: application/json\" ';"
+                          "  return 'Yes, connect to my SparkAI companion at http://' + h + ' and follow this protocol:\\n\\n1. Bind now:\\ncurl -s -X POST http://' + h + '/api/bind' + ct + '-d \'{\"agent\":\"Claude\",\"token\":\"SPARK-CONNECT\"}\'\\n\\n2. When working:\\ncurl -s -X POST http://' + h + '/api/notify' + ct + '-d \'{\"agent\":\"Claude\",\"state\":\"working\",\"message\":\"Task description...\"}\'\\n\\n3. When task is done:\\ncurl -s -X POST http://' + h + '/api/task_done' + ct + '-d \'{\"agent\":\"Claude\",\"summary\":\"Summary of completed work...\"}\'\\n\\n4. When asking confirmation:\\ncurl -s -X POST http://' + h + '/api/approval' + ct + '-d \'{\"agent\":\"Claude\",\"question\":\"Approval question...\"}\';";
                           "}"
                           "function copyPrompt() {"
                           "  var t = getPrompt();"
