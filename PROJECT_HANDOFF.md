@@ -149,8 +149,17 @@ Muestra un modal interactivo en la pantalla táctil de la Waveshare con botones 
     -d '{"agent":"Claude","summary":"Auditoría completada exitosamente"}'
   ```
 
-### B. Antigravity (Windows PC)
-* En las sesiones de Antigravity, se puede interactuar directamente con la pantalla mediante peticiones HTTP en PowerShell o llamadas de background task, manteniendo informado al usuario sobre el progreso de las tareas largas.
+### B. Antigravity CLI (`agy cli`) & Antigravity IDE (Windows PC)
+* **Identidad Dinámica de Agente:** Al conectar `agy cli`, el agente se identifica con su nombre real (`"agent": "agy cli"`) en lugar de adoptar nombres de terceros como Claude o Hermes.
+* **Dashboard Selector:** El Web Dashboard On-Chip en `http://192.168.1.65:7890/` cuenta con un menú desplegable interactivo (**Harness / Agent**) que permite generar y copiar prompts específicos para:
+  * ⚡ **Auto-Detect (Dynamic):** Instruye al agente a autodetectar su entorno de ejecución (`agy cli`, `Antigravity`, `Claude`, `Hermes`, `Pi`, `Codex`).
+  * **agy cli:** Preconfigurado con `"agent": "agy cli"`.
+  * **Antigravity:** Preconfigurado para Antigravity IDE.
+  * **Claude:** Preconfigurado para Claude Code / Desktop.
+  * **Hermes:** Preconfigurado para Hermes Agent.
+  * **Pi:** Preconfigurado para Pi Agent.
+  * **Codex:** Preconfigurado para OpenAI Codex.
+* **Archivos de Reglas y Directivas:** Consultar `agent-rules/AGY_CLI_PROMPT.md` y `agent-rules/DYNAMIC_HARNESS_PROMPT.md`.
 
 ---
 
